@@ -9,6 +9,8 @@
 
 #import <sqlite3.h>
 
+#import "MBXSparseMapDescriptor.h"
+
 #pragma mark - Private API for creating verbose errors
 
 @interface NSError (MBXError)
@@ -798,27 +800,35 @@
 }
 
 
-- (void)beginDownloadingMapID:(NSString *)mapID mapRegion:(MKCoordinateRegion)mapRegion minimumZ:(NSInteger)minimumZ maximumZ:(NSInteger)maximumZ includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers imageQuality:(MBXRasterImageQuality)imageQuality
-{
+- (void)beginDownloadingMapID:(NSString *)mapID mapRegion:(MKCoordinateRegion)mapRegion minimumZ:(NSInteger)minimumZ maximumZ:(NSInteger)maximumZ includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers imageQuality:(MBXRasterImageQuality)imageQuality {
+    
+    MBXSparseMapDescriptor *descriptor = [[MBXSparseMapDescriptor alloc] initWithMinimumZ:minimumZ maximumZ:maximumZ];
+    [self beginDownloadingMapID:mapID mapDescriptor:descriptor includeMetadata:includeMetadata includeMarkers:includeMarkers imageQuality:imageQuality];
+}
+
+
+- (void)beginDownloadingMapID:(NSString *)mapID mapDescriptor:(id<MBXMapDescriptorDelegate>)mapDescriptor includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers imageQuality:(MBXRasterImageQuality)imageQuality {
     assert(_state == MBXOfflineMapDownloaderStateAvailable);
-
+    
     [self setUpNewDataSession];
-
+    
     [_backgroundWorkQueue addOperationWithBlock:^{
-
+        
         // Start a download job to retrieve all the resources needed for using the specified map offline
         //
-        _uniqueID = [[NSUUID UUID] UUIDString];
+        NSString *uniqueID = [mapDescriptor uniqueID];
+        assert(uniqueID.length>0);
+        _uniqueID =  uniqueID;
         _mapID = mapID;
         _includesMetadata = includeMetadata;
         _includesMarkers = includeMarkers;
         _imageQuality = imageQuality;
-        _mapRegion = mapRegion;
-        _minimumZ = minimumZ;
-        _maximumZ = maximumZ;
+        MKCoordinateRegion mapRegion = _mapRegion = [mapDescriptor mapRegion];
+        _minimumZ = mapDescriptor.minimumZ;
+        _maximumZ = mapDescriptor.maximumZ;
         _state = MBXOfflineMapDownloaderStateRunning;
         [self notifyDelegateOfStateChange];
-
+        
         NSDictionary *metadataDictionary =
         @{
           @"uniqueID": _uniqueID,
@@ -826,84 +836,62 @@
           @"includesMetadata" : includeMetadata?@"YES":@"NO",
           @"includesMarkers" : includeMarkers?@"YES":@"NO",
           @"imageQuality" : [NSString stringWithFormat:@"%ld",(long)imageQuality],
+          // TODO: estrarre lat/lon e deltas
           @"region_latitude" : [NSString stringWithFormat:@"%.8f",mapRegion.center.latitude],
           @"region_longitude" : [NSString stringWithFormat:@"%.8f",mapRegion.center.longitude],
           @"region_latitude_delta" : [NSString stringWithFormat:@"%.8f",mapRegion.span.latitudeDelta],
           @"region_longitude_delta" : [NSString stringWithFormat:@"%.8f",mapRegion.span.longitudeDelta],
-          @"minimumZ" : [NSString stringWithFormat:@"%ld",(long)minimumZ],
-          @"maximumZ" : [NSString stringWithFormat:@"%ld",(long)maximumZ]
+          @"minimumZ" : [NSString stringWithFormat:@"%ld",(long)mapDescriptor.minimumZ],
+          @"maximumZ" : [NSString stringWithFormat:@"%ld",(long)mapDescriptor.maximumZ]
           };
-
-
+        
+        
         NSMutableArray *urls = [[NSMutableArray alloc] init];
-
+        
         NSString *version = ([MBXMapKit accessToken] ? @"v4" : @"v3");
         NSString *dataName = ([MBXMapKit accessToken] ? @"features.json" : @"markers.geojson");
         NSString *accessToken = ([MBXMapKit accessToken] ? [@"access_token=" stringByAppendingString:[MBXMapKit accessToken]] : nil);
-
+        
         // Include URLs for the metadata and markers json if applicable
         //
         if(includeMetadata)
         {
             [urls addObject:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@.json?secure%@",
-                                version,
-                                mapID,
-                                (accessToken ? [@"&" stringByAppendingString:accessToken] : @"")]];
+                             version,
+                             mapID,
+                             (accessToken ? [@"&" stringByAppendingString:accessToken] : @"")]];
         }
         if(includeMarkers)
         {
             [urls addObject:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%@%@",
-                                version,
-                                mapID,
-                                dataName,
-                                (accessToken ? [@"?" stringByAppendingString:accessToken] : @"")]];
+                             version,
+                             mapID,
+                             dataName,
+                             (accessToken ? [@"?" stringByAppendingString:accessToken] : @"")]];
         }
-
-        // Loop through the zoom levels and lat/lon bounds to generate a list of urls which should be included in the offline map
-        //
-        CLLocationDegrees minLat = mapRegion.center.latitude - (mapRegion.span.latitudeDelta / 2.0);
-        CLLocationDegrees maxLat = minLat + mapRegion.span.latitudeDelta;
-        CLLocationDegrees minLon = mapRegion.center.longitude - (mapRegion.span.longitudeDelta / 2.0);
-        CLLocationDegrees maxLon = minLon + mapRegion.span.longitudeDelta;
-        NSUInteger minX;
-        NSUInteger maxX;
-        NSUInteger minY;
-        NSUInteger maxY;
-        NSUInteger tilesPerSide;
-        for(NSUInteger zoom = minimumZ; zoom <= maximumZ; zoom++)
-        {
-            tilesPerSide = pow(2.0, zoom);
-            minX = floor(((minLon + 180.0) / 360.0) * tilesPerSide);
-            maxX = floor(((maxLon + 180.0) / 360.0) * tilesPerSide);
-            minY = floor((1.0 - (logf(tanf(maxLat * M_PI / 180.0) + 1.0 / cosf(maxLat * M_PI / 180.0)) / M_PI)) / 2.0 * tilesPerSide);
-            maxY = floor((1.0 - (logf(tanf(minLat * M_PI / 180.0) + 1.0 / cosf(minLat * M_PI / 180.0)) / M_PI)) / 2.0 * tilesPerSide);
-            for(NSUInteger x=minX; x<=maxX; x++)
-            {
-                for(NSUInteger y=minY; y<=maxY; y++)
-                {
-                    [urls addObject:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%ld/%ld/%ld%@.%@%@",
-                                     ([MBXMapKit accessToken] ? @"v4" : @"v3"),
-                                     mapID,
-                                     (long)zoom,
-                                     (long)x,
-                                     (long)y,
+        
+        for (long i=0;i<mapDescriptor.tilesCount;i++) {
+            RMTile tile = [mapDescriptor tileAtIndex:i];
+            [urls addObject:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%ld/%ld/%ld%@.%@%@",
+                             ([MBXMapKit accessToken] ? @"v4" : @"v3"),
+                             mapID,
+                             (long)tile.zoom,
+                             (long)tile.x,
+                             (long)tile.y,
 #if TARGET_OS_IPHONE
-                                     [[UIScreen mainScreen] scale] > 1.0 ? @"@2x" : @"",
+                             [[UIScreen mainScreen] scale] > 1.0 ? @"@2x" : @"",
 #else
-                                     // Making this smart enough to handle a Retina MacBook with a normal dpi external display
-                                     // is complicated. For now, just default to @1x images and a 1.0 scale.
-                                     //
-                                     @"",
+                             // Making this smart enough to handle a Retina MacBook with a normal dpi external display
+                             // is complicated. For now, just default to @1x images and a 1.0 scale.
+                             //
+                             @"",
 #endif
-                                     [MBXRasterTileOverlay qualityExtensionForImageQuality:_imageQuality],
-                                     ([MBXMapKit accessToken] ? [@"?access_token=" stringByAppendingString:[MBXMapKit accessToken]] : @"")
-                                     ]
-                     ];
-                }
-            }
+                             [MBXRasterTileOverlay qualityExtensionForImageQuality:_imageQuality],
+                             ([MBXMapKit accessToken] ? [@"?access_token=" stringByAppendingString:[MBXMapKit accessToken]] : @"")
+                             ]
+             ];
         }
-
-
+     
         // Determine if we need to add marker icon urls (i.e. parse markers.geojson/features.json), and if so, add them
         //
         if(includeMarkers)
@@ -913,62 +901,62 @@
             NSURLSessionDataTask *task;
             NSURLRequest *request = [NSURLRequest requestWithURL:geojson cachePolicy:NSURLRequestUseProtocolCachePolicy timeoutInterval:60];
             task = [_dataSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error)
-            {
-                if(error)
-                {
-                    // We got a session level error which probably indicates a connectivity problem such as airplane mode.
-                    // Since we must fetch and parse markers.geojson/features.json in order to determine which marker icons need to be
-                    // added to the list of urls to download, the lack of network connectivity is a non-recoverable error
-                    // here.
-                    //
-                    [self notifyDelegateOfNetworkConnectivityError:error];
-                    [self cancelImmediatelyWithError:error];
-                }
-                else
-                {
-                    if ([response isKindOfClass:[NSHTTPURLResponse class]] && ((NSHTTPURLResponse *)response).statusCode != 200)
                     {
-                        // The url for markers.geojson/features.json didn't work (some maps don't have any markers). Notify the delegate of the
-                        // problem, and stop attempting to add marker icons, but don't bail out on whole the offline map download.
-                        // The delegate can decide for itself whether it wants to continue or cancel.
-                        //
-                        [self notifyDelegateOfHTTPStatusError:((NSHTTPURLResponse *)response).statusCode url:response.URL];
-                    }
-                    else
-                    {
-                        // The marker geojson was successfully retrieved, so parse it for marker icons. Note that we shouldn't
-                        // try to save it here, because it may already be in the download queue and saving it twice will mess
-                        // up the count of urls to be downloaded!
-                        //
-                        NSArray *markerIconURLStrings = [self parseMarkerIconURLStringsFromGeojsonData:(NSData *)data];
-                        if(markerIconURLStrings)
+                        if(error)
                         {
-                            [urls addObjectsFromArray:markerIconURLStrings];
+                            // We got a session level error which probably indicates a connectivity problem such as airplane mode.
+                            // Since we must fetch and parse markers.geojson/features.json in order to determine which marker icons need to be
+                            // added to the list of urls to download, the lack of network connectivity is a non-recoverable error
+                            // here.
+                            //
+                            [self notifyDelegateOfNetworkConnectivityError:error];
+                            [self cancelImmediatelyWithError:error];
                         }
-                    }
-
-
-                    // ==========================================================================================================
-                    // == WARNING! WARNING! WARNING!                                                                           ==
-                    // == This stuff is a duplicate of the code immediately below it, but this copy is inside of a completion  ==
-                    // == block while the other isn't. You will be sad and confused if you try to eliminate the "duplication". ==
-                    //===========================================================================================================
-
-                    // Create the database and start the download
-                    //
-                    NSError *error;
-                    [self sqliteCreateDatabaseUsingMetadata:metadataDictionary urlArray:urls withError:&error];
-                    if(error)
-                    {
-                        [self cancelImmediatelyWithError:error];
-                    }
-                    else
-                    {
-                        [self notifyDelegateOfInitialCount];
-                        [self startDownloading];
-                    }
-                }
-            }];
+                        else
+                        {
+                            if ([response isKindOfClass:[NSHTTPURLResponse class]] && ((NSHTTPURLResponse *)response).statusCode != 200)
+                            {
+                                // The url for markers.geojson/features.json didn't work (some maps don't have any markers). Notify the delegate of the
+                                // problem, and stop attempting to add marker icons, but don't bail out on whole the offline map download.
+                                // The delegate can decide for itself whether it wants to continue or cancel.
+                                //
+                                [self notifyDelegateOfHTTPStatusError:((NSHTTPURLResponse *)response).statusCode url:response.URL];
+                            }
+                            else
+                            {
+                                // The marker geojson was successfully retrieved, so parse it for marker icons. Note that we shouldn't
+                                // try to save it here, because it may already be in the download queue and saving it twice will mess
+                                // up the count of urls to be downloaded!
+                                //
+                                NSArray *markerIconURLStrings = [self parseMarkerIconURLStringsFromGeojsonData:(NSData *)data];
+                                if(markerIconURLStrings)
+                                {
+                                    [urls addObjectsFromArray:markerIconURLStrings];
+                                }
+                            }
+                            
+                            
+                            // ==========================================================================================================
+                            // == WARNING! WARNING! WARNING!                                                                           ==
+                            // == This stuff is a duplicate of the code immediately below it, but this copy is inside of a completion  ==
+                            // == block while the other isn't. You will be sad and confused if you try to eliminate the "duplication". ==
+                            //===========================================================================================================
+                            
+                            // Create the database and start the download
+                            //
+                            NSError *error;
+                            [self sqliteCreateDatabaseUsingMetadata:metadataDictionary urlArray:urls withError:&error];
+                            if(error)
+                            {
+                                [self cancelImmediatelyWithError:error];
+                            }
+                            else
+                            {
+                                [self notifyDelegateOfInitialCount];
+                                [self startDownloading];
+                            }
+                        }
+                    }];
             [task resume];
         }
         else
@@ -988,6 +976,10 @@
             }
         }
     }];
+}
+
+- (void)beginDownloadingMapID:(NSString *)mapID mapDescriptor:(id<MBXMapDescriptorDelegate>)mapDescriptor {
+    [self beginDownloadingMapID:mapID mapDescriptor:mapDescriptor includeMetadata:YES includeMarkers:YES imageQuality:MBXRasterImageQualityFull];
 }
 
 
@@ -1147,6 +1139,11 @@
     return [NSArray arrayWithArray:_mutableOfflineMapDatabases];
 }
 
+-(MBXOfflineMapDatabase*)databaseWithUniqueId:(NSString*)uniqueId {
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"uniqueID == %@", uniqueId];
+    NSArray*array = [_mutableOfflineMapDatabases filteredArrayUsingPredicate:predicate];
+    return array.firstObject;
+}
 
 - (void)removeOfflineMapDatabase:(MBXOfflineMapDatabase *)offlineMapDatabase
 {

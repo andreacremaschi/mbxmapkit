@@ -5,6 +5,8 @@
 //  Copyright (c) 2014 Mapbox. All rights reserved.
 //
 
+#import "RMTile.h"
+
 @import Foundation;
 @import MapKit;
 
@@ -27,6 +29,7 @@ typedef NS_ENUM(NSUInteger, MBXOfflineMapDownloaderState) {
 
 @class MBXOfflineMapDownloader;
 @class MBXOfflineMapDatabase;
+@protocol MBXMapDescriptorDelegate;
 
 /** The `MBXOfflineMapDownloaderDelegate` protocol provides notifications of download progress and state machine transitions for the shared offline map downloader. */
 @protocol MBXOfflineMapDownloaderDelegate <NSObject>
@@ -139,34 +142,38 @@ typedef NS_ENUM(NSUInteger, MBXOfflineMapDownloaderState) {
 /** @name Managing Active Download Jobs */
 
 /** Begins an offline map download job including metadata and markers using the default (full) image quality.
-*   @param mapID The map ID from which to download offline map data.
-*   @param mapRegion The region of the map for which to download tiles.
-*   @param minimumZ The minimum zoom level for which to download tiles.
-*   @param maximumZ The maximum zoom level for which to download tiles. 
-*
-*   @warning It is recommended to check the return value of the offlineMapDownloader:totalFilesExpectedToWrite: delegate method to ensure that an unexpectedly large number of resources aren't going to be loaded. Map tile counts increase exponentially with increasing zoom level. */
+ *   @param mapID The map ID from which to download offline map data.
+ *   @param mapRegion The region of the map for which to download tiles.
+ *   @param minimumZ The minimum zoom level for which to download tiles.
+ *   @param maximumZ The maximum zoom level for which to download tiles.
+ *
+ *   @warning It is recommended to check the return value of the offlineMapDownloader:totalFilesExpectedToWrite: delegate method to ensure that an unexpectedly large number of resources aren't going to be loaded. Map tile counts increase exponentially with increasing zoom level. */
 - (void)beginDownloadingMapID:(NSString *)mapID mapRegion:(MKCoordinateRegion)mapRegion minimumZ:(NSInteger)minimumZ maximumZ:(NSInteger)maximumZ;
 
 /** Begins an offline map download job using the default (full) image quality.
-*   @param mapID The map ID from which to download offline map data.
-*   @param mapRegion The region of the map for which to download tiles.
-*   @param minimumZ The minimum zoom level for which to download tiles.
-*   @param maximumZ The maximum zoom level for which to download tiles.
-*   @param includeMetadata Whether to include the map's metadata (for values such as the initial center point and zoom) in the offline map.
-*   @param includeMarkers Whether to include the map's marker image resources in the offline map.
-*
-*   @warning It is recommended to check the return value of the offlineMapDownloader:totalFilesExpectedToWrite: delegate method to ensure that an unexpectedly large number of resources aren't going to be loaded. Map tile counts increase exponentially with increasing zoom level. */
+ *   @param mapID The map ID from which to download offline map data.
+ *   @param mapRegion The region of the map for which to download tiles.
+ *   @param minimumZ The minimum zoom level for which to download tiles.
+ *   @param maximumZ The maximum zoom level for which to download tiles.
+ *   @param includeMetadata Whether to include the map's metadata (for values such as the initial center point and zoom) in the offline map.
+ *   @param includeMarkers Whether to include the map's marker image resources in the offline map.
+ *
+ *   @warning It is recommended to check the return value of the offlineMapDownloader:totalFilesExpectedToWrite: delegate method to ensure that an unexpectedly large number of resources aren't going to be loaded. Map tile counts increase exponentially with increasing zoom level. */
 - (void)beginDownloadingMapID:(NSString *)mapID mapRegion:(MKCoordinateRegion)mapRegion minimumZ:(NSInteger)minimumZ maximumZ:(NSInteger)maximumZ includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers;
 
 /** Begins an offline map download job.
-*   @param mapID The map ID from which to download offline map data.
-*   @param mapRegion The region of the map for which to download tiles.
-*   @param minimumZ The minimum zoom level for which to download tiles.
-*   @param maximumZ The maximum zoom level for which to download tiles.
-*   @param includeMetadata Whether to include the map's metadata (for values such as the initial center point and zoom) in the offline map.
-*   @param includeMarkers Whether to include the map's marker image resources in the offline map.
-*   @param imageQuality The image quality to when requesting tiles. */
+ *   @param mapID The map ID from which to download offline map data.
+ *   @param mapRegion The region of the map for which to download tiles.
+ *   @param minimumZ The minimum zoom level for which to download tiles.
+ *   @param maximumZ The maximum zoom level for which to download tiles.
+ *   @param includeMetadata Whether to include the map's metadata (for values such as the initial center point and zoom) in the offline map.
+ *   @param includeMarkers Whether to include the map's marker image resources in the offline map.
+ *   @param imageQuality The image quality to when requesting tiles. */
 - (void)beginDownloadingMapID:(NSString *)mapID mapRegion:(MKCoordinateRegion)mapRegion minimumZ:(NSInteger)minimumZ maximumZ:(NSInteger)maximumZ includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers imageQuality:(MBXRasterImageQuality)imageQuality;
+
+
+- (void)beginDownloadingMapID:(NSString *)mapID mapDescriptor:(id <MBXMapDescriptorDelegate>)mapDescriptor;
+- (void)beginDownloadingMapID:(NSString *)mapID mapDescriptor:(id <MBXMapDescriptorDelegate>)mapDescriptor includeMetadata:(BOOL)includeMetadata includeMarkers:(BOOL)includeMarkers imageQuality:(MBXRasterImageQuality)imageQuality;
 
 /** Cancels the current offline map download job and discards any associated resources. */
 - (void)cancel;
@@ -176,6 +183,8 @@ typedef NS_ENUM(NSUInteger, MBXOfflineMapDownloaderState) {
 
 /** Suspends a currently running offline map download job. */
 - (void)suspend;
+
+-(MBXOfflineMapDatabase*)databaseWithUniqueId:(NSString*)uniqueId;
 
 /** @name Removing Offline Maps */
 
@@ -187,4 +196,19 @@ typedef NS_ENUM(NSUInteger, MBXOfflineMapDownloaderState) {
 *   @param uniqueID The unique ID of the map database to invalidate. */
 - (void)removeOfflineMapDatabaseWithID:(NSString *)uniqueID;
 
+@end
+
+
+@protocol MBXMapDescriptorDelegate <NSObject>
+
+@required
+
+-(int)tilesCount;
+-(RMTile)tileAtIndex:(int)index;
+
+-(NSInteger)minimumZ;
+-(NSInteger)maximumZ;
+-(MKCoordinateRegion) mapRegion;
+
+-(NSString*)uniqueID;
 @end
