@@ -288,6 +288,20 @@ typedef NS_ENUM(NSUInteger, MBXRenderCompletionState) {
 
 #pragma mark - MKTileOverlay implementation
 
+-(NSURL *)URLForTilePath:(MKTileOverlayPath)path {
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%ld/%ld/%ld%@.%@%@",
+                                       ([MBXMapKit accessToken] ? @"v4" : @"v3"),
+                                       _mapID,
+                                       (long)path.z,
+                                       (long)path.x,
+                                       (long)path.y,
+                                       (path.contentScaleFactor > 1.0 ? @"@2x" : @""),
+                                       [MBXRasterTileOverlay qualityExtensionForImageQuality:_imageQuality],
+                                       ([MBXMapKit accessToken] ? [@"?access_token=" stringByAppendingString:[MBXMapKit accessToken]] : @"")
+                                       ]];
+    return url;
+}
+
 - (MKMapRect)boundingMapRect
 {
     // Note: If you're wondering why this doesn't return a MapRect calculated from the TileJSON's bounds, it's been
@@ -305,17 +319,7 @@ typedef NS_ENUM(NSUInteger, MBXRenderCompletionState) {
         //
         return;
     }
-
-    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%ld/%ld/%ld%@.%@%@",
-                                       ([MBXMapKit accessToken] ? @"v4" : @"v3"),
-                                       _mapID,
-                                       (long)path.z,
-                                       (long)path.x,
-                                       (long)path.y,
-                                       (path.contentScaleFactor > 1.0 ? @"@2x" : @""),
-                                       [MBXRasterTileOverlay qualityExtensionForImageQuality:_imageQuality],
-                                       ([MBXMapKit accessToken] ? [@"?access_token=" stringByAppendingString:[MBXMapKit accessToken]] : @"")
-                                       ]];
+    NSURL *url = [self URLForTilePath:path];
 
     void(^completionHandler)(NSData *,NSError *) = ^(NSData *data, NSError *error)
     {

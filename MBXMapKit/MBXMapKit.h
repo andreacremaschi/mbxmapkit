@@ -10,7 +10,7 @@
 
 #import "MBXConstantsAndTypes.h"
 #import "MBXOfflineMapDatabase.h"
-#import "MBXOfflineMapDownloader.h"
+#import "MBXMapDownloadOperation.h"
 #import "MBXPointAnnotation.h"
 #import "MBXRasterTileOverlay.h"
 
